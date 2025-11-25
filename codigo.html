@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Lector de Código de Barras</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+        video { width: 100%; max-width: 420px; border: 2px solid #333; border-radius: 8px; }
+        #resultado { margin-top: 20px; font-size: 22px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h2>Escáner de Código de Barras</h2>
+    <p>Apunta la cámara al código de barras</p>
+
+    <video id="video"></video>
+    <div id="resultado">Esperando código...</div>
+
+    <!-- Librería ZXing -->
+    <script src="https://unpkg.com/@zxing/library@latest"></script>
+
+    <script>
+        const codeReader = new ZXing.BrowserMultiFormatReader();
+        const video = document.getElementById('video');
+        const resultado = document.getElementById('resultado');
+
+        // Usar cámara trasera (ideal en celular)
+        navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" }
+        }).then(stream => {
+            video.srcObject = stream;
+            video.play();
+
+            // Comienza a decodificar continuamente
+            codeReader.decodeFromVideoDevice(null, video, (result, err) => {
+                if (result) {
+                    resultado.textContent = "Código detectado: " + result.text;
+                    console.log("Código:", result.text);
+                }
+            });
+
+        }).catch(err => {
+            console.error(err);
+            resultado.textContent = "No se pudo acceder a la cámara.";
+        });
+    </script>
+</body>
+</html>
