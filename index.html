@@ -3,13 +3,17 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Lector de Código de Barras y QR</title>
+    <title>Escáner de Código</title>
     <style>
         body {
             font-family: Arial, sans-serif;
             padding: 20px;
             text-align: center;
             position: relative;
+        }
+        .scanner-container {
+            position: relative;
+            display: inline-block;
         }
         video {
             width: 100%;
@@ -18,16 +22,17 @@
             border-radius: 8px;
             object-fit: contain;
         }
-        #overlay {
+        /* Línea central estilo imagen */
+        #scan-line {
             position: absolute;
             top: 50%;
             left: 50%;
             width: 80%;
-            height: 60px; /* altura de la línea */
+            height: 4px;
+            background-color: green;
             transform: translate(-50%, -50%);
-            border: 2px solid red;
-            box-sizing: border-box;
-            pointer-events: none; /* no bloquea la cámara */
+            box-shadow: 0 0 10px rgba(0, 128, 0, 0.7);
+            pointer-events: none;
         }
         #resultado {
             margin-top: 20px;
@@ -38,11 +43,11 @@
 </head>
 <body>
     <h2>Escáner de Código de Barras y QR</h2>
-    <p>Apunta el código dentro de la línea roja</p>
+    <p>Coloca el código sobre la línea verde</p>
 
-    <div style="position: relative; display: inline-block;">
+    <div class="scanner-container">
         <video id="video" autoplay></video>
-        <div id="overlay"></div>
+        <div id="scan-line"></div>
     </div>
     <div id="resultado">Esperando código...</div>
 
@@ -57,11 +62,6 @@
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
 
-        // Función para obtener rotación actual
-        function getRotation() {
-            return screen.orientation?.angle || window.orientation || 0;
-        }
-
         // Iniciar cámara con alta resolución
         navigator.mediaDevices.getUserMedia({
             video: {
@@ -71,22 +71,13 @@
             }
         }).then(stream => {
             video.srcObject = stream;
-
-            video.addEventListener('play', () => {
-                scanFrame();
-            });
-
-            // Detectar cambios de orientación
-            window.addEventListener('orientationchange', () => {
-                console.log("Nueva orientación:", getRotation());
-            });
-
+            video.addEventListener('play', scanFrame);
         }).catch(err => {
             console.error(err);
             resultado.textContent = "No se pudo acceder a la cámara.";
         });
 
-        // Escaneo solo en la línea roja
+        // Escaneo solo en la franja de la línea verde
         function scanFrame() {
             if (video.videoWidth === 0 || video.videoHeight === 0) {
                 requestAnimationFrame(scanFrame);
@@ -96,7 +87,7 @@
             const videoWidth = video.videoWidth;
             const videoHeight = video.videoHeight;
 
-            const cropHeight = 60; // igual que la línea
+            const cropHeight = 80; // zona alrededor de la línea
             const cropY = (videoHeight / 2) - (cropHeight / 2);
 
             canvas.width = videoWidth;
