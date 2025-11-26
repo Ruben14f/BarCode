@@ -1,97 +1,717 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <title>Escáner de Código</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 20px;
-            text-align: center;
-        }
-        .scanner-container {
-            position: relative;
-            display: inline-block;
-        }
-        video {
-            width: 100%;
-            max-width: 420px;
-            border: 2px solid #333;
-            border-radius: 8px;
-            object-fit: cover;
-        }
-        /* Línea verde en el centro */
-        #scan-line {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            width: 80%;
-            height: 4px;
-            background-color: green;
-            transform: translate(-50%, -50%);
-            box-shadow: 0 0 10px rgba(0, 128, 0, 0.7);
-            pointer-events: none;
-        }
-        #resultado {
-            margin-top: 20px;
-            font-size: 22px;
-            font-weight: bold;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Lector de Códigos (QR + Barra)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- ZXing TypeScript port (UMD, expone objeto global ZXing) -->
+  <script src="https://unpkg.com/@zxing/library@latest"></script>
+
+  <style>
+    :root {
+      --bg: #0b1020;
+      --card: #151b2d;
+      --accent: #00ff7f;
+      --accent-soft: rgba(0, 255, 127, 0.25);
+      --text: #f7f7ff;
+      --text-muted: #a0aec0;
+      --danger: #ff4b6a;
+    }
+
+    * {
+      box-sizing: border-box;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top, #1a2240, #050712);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .app-container {
+      width: 100%;
+      max-width: 1000px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.2fr);
+      gap: 1.2rem;
+    }
+
+    @media (max-width: 800px) {
+      .app-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: 18px;
+      padding: 1rem 1.2rem 1.2rem;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.02);
+    }
+
+    .card h1,
+    .card h2 {
+      margin: 0 0 0.6rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 1.1rem;
+    }
+
+    .subtitle {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .badge {
+      font-size: 0.7rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      border: 1px solid var(--accent-soft);
+      color: var(--accent);
+    }
+
+    /* Área de escáner */
+
+    .scanner-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 500px;
+      margin: 0 auto 1rem;
+      background: #000;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    /* “Franja” tipo código de barra: poco alto, ancho completo */
+    .scanner-video-container {
+      position: relative;
+      width: 100%;
+      height: 180px;           /* Ajusta para hacerlo más o menos “fino” */
+      overflow: hidden;
+      background: #000;
+    }
+
+    video#videoPreview {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);   /* Espejo tipo selfie, opcional */
+    }
+
+    /* Línea verde central */
+    .scan-line {
+      position: absolute;
+      left: 10%;
+      right: 10%;
+      top: 50%;
+      height: 3px;
+      transform: translateY(-50%);
+      background: var(--accent);
+      box-shadow:
+        0 0 8px var(--accent),
+        0 0 16px var(--accent-soft);
+      z-index: 3;
+    }
+
+    .scan-line::before {
+      content: "";
+      position: absolute;
+      inset: -18px 0;
+      background: linear-gradient(
+        to bottom,
+        transparent,
+        rgba(0, 255, 127, 0.15),
+        transparent
+      );
+      pointer-events: none;
+    }
+
+    .scanner-footer {
+      padding: 0.5rem 0.75rem 0.65rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      font-size: 0.8rem;
+      border-top: 1px dashed rgba(255, 255, 255, 0.1);
+      background: radial-gradient(circle at bottom, #0f172a, transparent);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-right: 0.4rem;
+      background: #718096;
+    }
+
+    .status-dot.active {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    .status-text {
+      color: var(--text-muted);
+    }
+
+    .status-text strong {
+      color: var(--accent);
+    }
+
+    .controls-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      align-items: center;
+      margin-bottom: 0.7rem;
+    }
+
+    select,
+    button {
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(15, 23, 42, 0.9);
+      color: var(--text);
+      padding: 0.35rem 0.85rem;
+      font-size: 0.8rem;
+      outline: none;
+    }
+
+    select:focus,
+    button:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-soft);
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.06s ease;
+    }
+
+    button.primary {
+      background: linear-gradient(135deg, #00ff7f, #37fca9);
+      border-color: transparent;
+      color: #02130a;
+      box-shadow: 0 10px 25px rgba(0, 255, 127, 0.35);
+    }
+
+    button.primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 35px rgba(0, 255, 127, 0.45);
+    }
+
+    button.secondary:hover {
+      background: rgba(31, 41, 55, 1);
+    }
+
+    button.danger {
+      border-color: rgba(255, 75, 106, 0.6);
+      color: var(--danger);
+    }
+
+    button.danger:hover {
+      background: rgba(75, 16, 32, 0.9);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    /* Tabla de resultados */
+
+    .table-wrapper {
+      max-height: 400px;
+      overflow: auto;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+
+    thead {
+      position: sticky;
+      top: 0;
+      background: #0f172a;
+      z-index: 1;
+    }
+
+    th,
+    td {
+      padding: 0.4rem 0.5rem;
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    tbody tr:nth-child(even) {
+      background: rgba(15, 23, 42, 0.7);
+    }
+
+    tbody tr:nth-child(odd) {
+      background: rgba(15, 23, 42, 0.4);
+    }
+
+    tbody tr:hover {
+      background: rgba(56, 189, 248, 0.18);
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.1rem 0.4rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      background: rgba(148, 163, 184, 0.18);
+      color: var(--text-muted);
+    }
+
+    .tag-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .no-data {
+      text-align: center;
+      padding: 0.8rem;
+      color: var(--text-muted);
+    }
+
+    .records-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.35rem;
+      margin-bottom: 0.4rem;
+      font-size: 0.75rem;
+    }
+
+    .helper-text {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      margin-top: 0.2rem;
+    }
+
+    .pill-info {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .pill-info span {
+      font-size: 0.72rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.45);
+    }
+  </style>
 </head>
 <body>
-    <h2>Escáner de Código de Barras y QR</h2>
-    <p>Coloca el código sobre la línea verde</p>
+  <div class="app-container">
+    <!-- PANEL IZQUIERDO: ESCÁNER -->
+    <section class="card">
+      <h1>
+        📷 Lector de códigos
+        <span class="badge">QR + Barra (ZXing)</span>
+      </h1>
+      <p class="subtitle">
+        Apunta la cámara hacia el código. Sólo se considera la
+        <strong>línea verde central</strong> para leerlo visualmente.
+      </p>
 
-    <div class="scanner-container">
-        <video id="video" autoplay playsinline muted></video>
-        <div id="scan-line"></div>
-    </div>
-    <div id="resultado">Esperando código...</div>
+      <div class="controls-row">
+        <label for="cameraSelect" style="font-size:0.8rem;">Cámara:</label>
+        <select id="cameraSelect"></select>
 
-    <!-- Librería ZXing -->
-    <script src="https://unpkg.com/@zxing/library@latest"></script>
+        <button id="btnStart" class="primary">
+          ▶ Iniciar escáner
+        </button>
+        <button id="btnStop" class="secondary">
+          ⏹ Detener
+        </button>
+      </div>
 
-    <script>
-        const video = document.getElementById('video');
-        const resultado = document.getElementById('resultado');
+      <div class="scanner-wrapper">
+        <div class="scanner-video-container">
+          <video id="videoPreview" autoplay muted playsinline></video>
+          <div class="scan-line"></div>
+        </div>
+        <div class="scanner-footer">
+          <div style="display:flex;align-items:center;gap:0.4rem;">
+            <span id="statusDot" class="status-dot"></span>
+            <span id="statusText" class="status-text">Cámara detenida</span>
+          </div>
+          <div class="pill-info">
+            <span>Datos guardados en el navegador (localStorage)</span>
+          </div>
+        </div>
+      </div>
 
-        const codeReader = new ZXing.BrowserMultiFormatReader();
+      <p class="helper-text">
+        Cada vez que se detecta un código se pedirá el
+        <strong>Nombre de la persona</strong> asociada. Una persona puede tener
+        varios códigos.
+      </p>
+    </section>
 
-        // Lista las cámaras y usa la trasera si existe
-        codeReader.listVideoInputDevices()
-            .then(videoInputDevices => {
-                if (videoInputDevices.length === 0) {
-                    resultado.textContent = "No se encontraron cámaras.";
-                    return;
-                }
+    <!-- PANEL DERECHO: REGISTROS -->
+    <section class="card">
+      <h2>
+        🧾 Registros escaneados
+        <span class="badge">Exportable a CSV / Excel</span>
+      </h2>
+      <p class="subtitle">
+        Los datos se guardan automáticamente en el almacenamiento local del navegador.
+      </p>
 
-                // Tratar de usar la cámara trasera en el celular
-                let selectedDeviceId = videoInputDevices[0].deviceId;
-                const backCamera = videoInputDevices.find(device =>
-                    device.label.toLowerCase().includes('back') ||
-                    device.label.toLowerCase().includes('trasera') ||
-                    device.label.toLowerCase().includes('environment')
-                );
-                if (backCamera) {
-                    selectedDeviceId = backCamera.deviceId;
-                }
+      <div class="records-actions">
+        <button id="btnExport" class="secondary">⬇ Exportar CSV</button>
+        <button id="btnClear" class="danger">🗑 Limpiar registros</button>
+      </div>
 
-                // Iniciar decodificación desde el video
-                codeReader.decodeFromVideoDevice(selectedDeviceId, 'video', (result, err) => {
-                    if (result) {
-                        resultado.textContent = "Código detectado: " + result.getText();
-                        console.log("Código:", result.getText());
-                        // Si quieres que se detenga después de leer uno:
-                        // codeReader.reset();
-                    }
-                    // Los errores "normales" de no encontrar código se ignoran
-                });
-            })
-            .catch(err => {
-                console.error(err);
-                resultado.textContent = "Error al iniciar la cámara.";
-            });
-    </script>
+      <div class="table-wrapper">
+        <table id="recordsTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Código</th>
+              <th>Tipo</th>
+              <th>Nombre</th>
+              <th>Fecha / Hora</th>
+            </tr>
+          </thead>
+          <tbody id="recordsBody">
+            <!-- Filas dinámicas -->
+          </tbody>
+        </table>
+      </div>
+      <div id="noDataMsg" class="no-data" style="display:none;">
+        Aún no hay códigos escaneados.
+      </div>
+    </section>
+  </div>
+
+  <script>
+    // ====== ESTADO GLOBAL ======
+    let codeReader = null;
+    let selectedDeviceId = null;
+    let isScanning = false;
+    let scanRecords = [];
+    let lastScannedCode = null;
+    let lastScanTime = 0;
+
+    // ====== UTILIDADES DE STORAGE ======
+    function loadRecordsFromStorage() {
+      try {
+        const raw = localStorage.getItem("scanRecords");
+        if (raw) {
+          scanRecords = JSON.parse(raw);
+        } else {
+          scanRecords = [];
+        }
+      } catch (e) {
+        console.error("Error leyendo localStorage:", e);
+        scanRecords = [];
+      }
+      renderRecordsTable();
+    }
+
+    function saveRecordsToStorage() {
+      try {
+        localStorage.setItem("scanRecords", JSON.stringify(scanRecords));
+      } catch (e) {
+        console.error("Error guardando en localStorage:", e);
+      }
+    }
+
+    // ====== RENDER TABLA ======
+    function renderRecordsTable() {
+      const tbody = document.getElementById("recordsBody");
+      const noDataMsg = document.getElementById("noDataMsg");
+      tbody.innerHTML = "";
+
+      if (!scanRecords.length) {
+        noDataMsg.style.display = "block";
+        return;
+      }
+
+      noDataMsg.style.display = "none";
+
+      scanRecords.forEach((rec, index) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td>${rec.code}</td>
+          <td>
+            <span class="tag">
+              <span class="tag-dot"></span>
+              ${rec.type || "DESCONOCIDO"}
+            </span>
+          </td>
+          <td>${rec.name || "-"}</td>
+          <td>${rec.time}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // ====== ESTADO UI ESCÁNER ======
+    function setScannerStatus(active, message) {
+      const dot = document.getElementById("statusDot");
+      const text = document.getElementById("statusText");
+
+      if (active) {
+        dot.classList.add("active");
+        text.innerHTML = `<strong>Escaneando...</strong> ${message || ""}`;
+      } else {
+        dot.classList.remove("active");
+        text.textContent = message || "Cámara detenida";
+      }
+    }
+
+    // ====== EXPORTAR CSV ======
+    function exportToCSV() {
+      if (!scanRecords.length) {
+        alert("No hay registros para exportar.");
+        return;
+      }
+
+      const header = ["N°", "Código", "Tipo", "Nombre", "FechaHora"];
+      let csv = header.join(";") + "\n";
+
+      scanRecords.forEach((rec, index) => {
+        const safeCode = String(rec.code).replace(/"/g, '""');
+        const safeType = String(rec.type || "").replace(/"/g, '""');
+        const safeName = String(rec.name || "").replace(/"/g, '""');
+        const safeTime = String(rec.time || "").replace(/"/g, '""');
+
+        csv += [
+          index + 1,
+          `"${safeCode}"`,
+          `"${safeType}"`,
+          `"${safeName}"`,
+          `"${safeTime}"`
+        ].join(";") + "\n";
+      });
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "lecturas_codigos.csv";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    // ====== LIMPIAR REGISTROS ======
+    function clearRecords() {
+      if (!confirm("¿Seguro que quieres eliminar todos los registros guardados?")) {
+        return;
+      }
+      scanRecords = [];
+      saveRecordsToStorage();
+      renderRecordsTable();
+    }
+
+    // ====== MANEJO DE ESCANEOS ======
+    function handleScanResult(result) {
+      if (!result) return;
+
+      const codeText = result.text || (result.getText && result.getText()) || "";
+      if (!codeText) return;
+
+      const now = Date.now();
+      // Evitar estar preguntando en loop si la cámara sigue viendo el mismo código
+      if (codeText === lastScannedCode && now - lastScanTime < 2000) {
+        return;
+      }
+      lastScannedCode = codeText;
+      lastScanTime = now;
+
+      let format = "DESCONOCIDO";
+      try {
+        if (result.getBarcodeFormat) {
+          format = String(result.getBarcodeFormat());
+        } else if (result.barcodeFormat) {
+          format = String(result.barcodeFormat);
+        }
+      } catch (_) {}
+
+      const name = prompt(
+        `Código detectado:\n\n${codeText}\n\nIngresa el NOMBRE de la persona asociada a este código:`
+      );
+
+      if (name === null) {
+        // Cancelado: no guardamos
+        return;
+      }
+
+      const trimmedName = name.trim();
+      const timestamp = new Date().toLocaleString();
+
+      scanRecords.push({
+        code: codeText,
+        type: format,
+        name: trimmedName || "",
+        time: timestamp
+      });
+
+      saveRecordsToStorage();
+      renderRecordsTable();
+    }
+
+    // ====== INICIALIZAR CÁMARAS ======
+    async function initZXingAndDevices() {
+      try {
+        // Objeto global expuesto por el UMD de @zxing/library
+        codeReader = new ZXing.BrowserMultiFormatReader();
+        const devices = await codeReader.getVideoInputDevices(); // ejemplo oficial :contentReference[oaicite:1]{index=1}
+
+        const select = document.getElementById("cameraSelect");
+        select.innerHTML = "";
+
+        if (!devices.length) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "No se encontraron cámaras";
+          select.appendChild(opt);
+          setScannerStatus(false, "Sin dispositivos de cámara.");
+          return;
+        }
+
+        // Elegir por defecto la primera, o la que parezca 'back' en móviles
+        let defaultDeviceId = devices[0].deviceId;
+        devices.forEach((device) => {
+          const opt = document.createElement("option");
+          opt.value = device.deviceId;
+          opt.textContent = device.label || `Cámara ${select.length + 1}`;
+          select.appendChild(opt);
+
+          const labelLower = (device.label || "").toLowerCase();
+          if (labelLower.includes("back") || labelLower.includes("trasera")) {
+            defaultDeviceId = device.deviceId;
+          }
+        });
+
+        selectedDeviceId = defaultDeviceId;
+        select.value = selectedDeviceId;
+
+        select.addEventListener("change", () => {
+          selectedDeviceId = select.value;
+          if (isScanning) {
+            startScanner(); // reiniciar con la nueva cámara
+          }
+        });
+
+        setScannerStatus(false, "Selecciona una cámara y pulsa Iniciar.");
+      } catch (err) {
+        console.error("Error inicializando ZXing o cámaras:", err);
+        alert("No se pudo inicializar la cámara. Revisa permisos y conexión HTTPS.");
+        setScannerStatus(false, "Error al inicializar cámara.");
+      }
+    }
+
+    // ====== CONTROLAR ESCÁNER ======
+    async function startScanner() {
+      if (!codeReader) {
+        alert("ZXing aún no está listo.");
+        return;
+      }
+      if (!selectedDeviceId) {
+        alert("No hay cámara seleccionada.");
+        return;
+      }
+
+      if (isScanning) {
+        // Reiniciar antes de comenzar de nuevo
+        codeReader.reset();
+      }
+
+      isScanning = true;
+      setScannerStatus(true, "Apunta el código a la línea verde.");
+
+      try {
+        // decodeFromVideoDevice: escaneo continuo desde cámara :contentReference[oaicite:2]{index=2}
+        await codeReader.decodeFromVideoDevice(
+          selectedDeviceId,
+          "videoPreview",
+          (result, err) => {
+            if (result) {
+              handleScanResult(result);
+            }
+            if (err && !(err instanceof ZXing.NotFoundException)) {
+              console.error("Error de ZXing:", err);
+            }
+          }
+        );
+      } catch (err) {
+        console.error("Error al iniciar escáner:", err);
+        alert("No se pudo iniciar el escáner. Revisa permisos de cámara.");
+        setScannerStatus(false, "Error iniciando cámara.");
+        isScanning = false;
+      }
+    }
+
+    function stopScanner() {
+      if (codeReader) {
+        codeReader.reset();
+      }
+      isScanning = false;
+      setScannerStatus(false, "Cámara detenida.");
+    }
+
+    // ====== LISTENERS INICIALES ======
+    document.addEventListener("DOMContentLoaded", () => {
+      loadRecordsFromStorage();
+      initZXingAndDevices();
+
+      document.getElementById("btnStart").addEventListener("click", () => {
+        startScanner();
+      });
+
+      document.getElementById("btnStop").addEventListener("click", () => {
+        stopScanner();
+      });
+
+      document.getElementById("btnExport").addEventListener("click", () => {
+        exportToCSV();
+      });
+
+      document.getElementById("btnClear").addEventListener("click", () => {
+        clearRecords();
+      });
+    });
+  </script>
 </body>
 </html>
