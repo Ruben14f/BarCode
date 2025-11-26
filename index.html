@@ -6,7 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- ZXing TypeScript port (UMD, expone objeto global ZXing) -->
-  <!-- Usando siempre la última versión disponible -->
   <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
 
   <style>
@@ -105,7 +104,8 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      transform: scaleX(-1);   /* Espejo tipo selfie, opcional */
+      /* 🔴 IMPORTANTE: ya NO invertimos la cámara */
+      /* transform: scaleX(-1);  <- eliminado */
     }
 
     /* Línea verde central */
@@ -339,8 +339,8 @@
         <span class="badge">QR + Barra (ZXing)</span>
       </h1>
       <p class="subtitle">
-        Apunta la cámara hacia el código. Sólo se considera la
-        <strong>línea verde central</strong> de forma visual (para que alinees el código).
+        Apunta la cámara hacia el código. Alinea el código con la
+        <strong>línea verde central</strong>.
       </p>
 
       <div class="controls-row">
@@ -369,9 +369,8 @@
       </div>
 
       <p class="helper-text">
-        Cada vez que se detecta un código se pedirá el
-        <strong>Nombre de la persona</strong> asociada. Una persona puede tener
-        varios códigos.
+        Por cada código se pedirá el
+        <strong>Nombre de la persona</strong>. Es obligatorio ingresar un nombre.
       </p>
     </section>
 
@@ -416,6 +415,7 @@
     // ====== ESTADO GLOBAL ======
     let codeReader = null;
     let isScanning = false;
+    let isProcessingScan = false; // 👈 para evitar loop de prompts
     let scanRecords = [];
     let lastScannedCode = null;
     let lastScanTime = 0;
@@ -540,12 +540,23 @@
       if (!codeText) return;
 
       const now = Date.now();
-      // Evitar pedir repetidamente el mismo código si la cámara se queda apuntando
-      if (codeText === lastScannedCode && now - lastScanTime < 2000) {
+
+      // Si ya estamos procesando un código, no hagas nada (evita loop)
+      if (isProcessingScan) return;
+
+      // (opcional) filtro anti-repetición muy rápida
+      if (codeText === lastScannedCode && now - lastScanTime < 500) {
         return;
       }
+
       lastScannedCode = codeText;
       lastScanTime = now;
+      isProcessingScan = true;
+
+      // Pausar escáner mientras pedimos el nombre
+      if (codeReader) {
+        codeReader.reset();
+      }
 
       let format = "DESCONOCIDO";
       try {
@@ -556,27 +567,52 @@
         }
       } catch (_) {}
 
-      const name = prompt(
-        `Código detectado:\n\n${codeText}\n\nIngresa el NOMBRE de la persona asociada a este código:`
-      );
+      // ✅ Debe SI O SI ingresar un usuario (nombre no vacío)
+      let name;
+      while (true) {
+        name = prompt(
+          `Código detectado:\n\n${codeText}\n\nIngresa el NOMBRE de la persona asociada a este código (obligatorio):`
+        );
 
-      if (name === null) {
-        // Cancelado: no guardamos
-        return;
+        if (name === null) {
+          // Si cancela, no guardamos, pero salimos del bucle
+          isProcessingScan = false;
+          // Si el usuario sigue con escáner activo, lo reanudamos:
+          if (isScanning) {
+            startScanner();
+          }
+          return;
+        }
+
+        const trimmed = name.trim();
+        if (!trimmed) {
+          alert("Debes ingresar un nombre para continuar.");
+          continue; // vuelve a preguntar
+        }
+
+        name = trimmed;
+        break; // nombre válido
       }
 
-      const trimmedName = name.trim();
       const timestamp = new Date().toLocaleString();
 
       scanRecords.push({
         code: codeText,
         type: format,
-        name: trimmedName || "",
+        name: name,
         time: timestamp
       });
 
       saveRecordsToStorage();
       renderRecordsTable();
+
+      // Terminamos de procesar este scan
+      isProcessingScan = false;
+
+      // Volver a escanear el siguiente código (si el usuario no ha detenido)
+      if (isScanning) {
+        startScanner();
+      }
     }
 
     // ====== INICIALIZAR ZXING ======
@@ -598,15 +634,12 @@
         return;
       }
 
-      if (isScanning) {
-        codeReader.reset();
-      }
-
+      // Marcamos que el usuario quiere escanear
       isScanning = true;
       setScannerStatus(true, "Apunta el código a la línea verde.");
 
       try {
-        // Pasamos null para que use la cámara por defecto del navegador
+        // Usar cámara por defecto del navegador
         await codeReader.decodeFromVideoDevice(
           null,
           "videoPreview",
@@ -632,6 +665,7 @@
         codeReader.reset();
       }
       isScanning = false;
+      isProcessingScan = false;
       setScannerStatus(false, "Cámara detenida.");
     }
 
