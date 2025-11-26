@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- ZXing TypeScript port (UMD, expone objeto global ZXing) -->
-  <script src="https://unpkg.com/@zxing/library@latest"></script>
+  <!-- Usando siempre la última versión disponible -->
+  <script src="https://unpkg.com/@zxing/library@latest/umd/index.min.js"></script>
 
   <style>
     :root {
@@ -95,7 +96,7 @@
     .scanner-video-container {
       position: relative;
       width: 100%;
-      height: 180px;           /* Ajusta para hacerlo más o menos “fino” */
+      height: 180px;           /* Alto reducido, estilo escáner de barra */
       overflow: hidden;
       background: #000;
     }
@@ -175,7 +176,6 @@
       margin-bottom: 0.7rem;
     }
 
-    select,
     button {
       border-radius: 999px;
       border: 1px solid rgba(255, 255, 255, 0.12);
@@ -184,21 +184,17 @@
       padding: 0.35rem 0.85rem;
       font-size: 0.8rem;
       outline: none;
-    }
-
-    select:focus,
-    button:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 1px var(--accent-soft);
-    }
-
-    button {
       cursor: pointer;
       font-weight: 500;
       display: inline-flex;
       align-items: center;
       gap: 0.3rem;
       transition: transform 0.06s ease, box-shadow 0.06s ease, background 0.06s ease;
+    }
+
+    button:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-soft);
     }
 
     button.primary {
@@ -344,13 +340,10 @@
       </h1>
       <p class="subtitle">
         Apunta la cámara hacia el código. Sólo se considera la
-        <strong>línea verde central</strong> para leerlo visualmente.
+        <strong>línea verde central</strong> de forma visual (para que alinees el código).
       </p>
 
       <div class="controls-row">
-        <label for="cameraSelect" style="font-size:0.8rem;">Cámara:</label>
-        <select id="cameraSelect"></select>
-
         <button id="btnStart" class="primary">
           ▶ Iniciar escáner
         </button>
@@ -422,21 +415,16 @@
   <script>
     // ====== ESTADO GLOBAL ======
     let codeReader = null;
-    let selectedDeviceId = null;
     let isScanning = false;
     let scanRecords = [];
     let lastScannedCode = null;
     let lastScanTime = 0;
 
-    // ====== UTILIDADES DE STORAGE ======
+    // ====== STORAGE ======
     function loadRecordsFromStorage() {
       try {
         const raw = localStorage.getItem("scanRecords");
-        if (raw) {
-          scanRecords = JSON.parse(raw);
-        } else {
-          scanRecords = [];
-        }
+        scanRecords = raw ? JSON.parse(raw) : [];
       } catch (e) {
         console.error("Error leyendo localStorage:", e);
         scanRecords = [];
@@ -452,7 +440,7 @@
       }
     }
 
-    // ====== RENDER TABLA ======
+    // ====== TABLA ======
     function renderRecordsTable() {
       const tbody = document.getElementById("recordsBody");
       const noDataMsg = document.getElementById("noDataMsg");
@@ -552,7 +540,7 @@
       if (!codeText) return;
 
       const now = Date.now();
-      // Evitar estar preguntando en loop si la cámara sigue viendo el mismo código
+      // Evitar pedir repetidamente el mismo código si la cámara se queda apuntando
       if (codeText === lastScannedCode && now - lastScanTime < 2000) {
         return;
       }
@@ -591,70 +579,26 @@
       renderRecordsTable();
     }
 
-    // ====== INICIALIZAR CÁMARAS ======
-    async function initZXingAndDevices() {
+    // ====== INICIALIZAR ZXING ======
+    function initZXing() {
       try {
-        // Objeto global expuesto por el UMD de @zxing/library
         codeReader = new ZXing.BrowserMultiFormatReader();
-        const devices = await codeReader.getVideoInputDevices(); // ejemplo oficial :contentReference[oaicite:1]{index=1}
-
-        const select = document.getElementById("cameraSelect");
-        select.innerHTML = "";
-
-        if (!devices.length) {
-          const opt = document.createElement("option");
-          opt.value = "";
-          opt.textContent = "No se encontraron cámaras";
-          select.appendChild(opt);
-          setScannerStatus(false, "Sin dispositivos de cámara.");
-          return;
-        }
-
-        // Elegir por defecto la primera, o la que parezca 'back' en móviles
-        let defaultDeviceId = devices[0].deviceId;
-        devices.forEach((device) => {
-          const opt = document.createElement("option");
-          opt.value = device.deviceId;
-          opt.textContent = device.label || `Cámara ${select.length + 1}`;
-          select.appendChild(opt);
-
-          const labelLower = (device.label || "").toLowerCase();
-          if (labelLower.includes("back") || labelLower.includes("trasera")) {
-            defaultDeviceId = device.deviceId;
-          }
-        });
-
-        selectedDeviceId = defaultDeviceId;
-        select.value = selectedDeviceId;
-
-        select.addEventListener("change", () => {
-          selectedDeviceId = select.value;
-          if (isScanning) {
-            startScanner(); // reiniciar con la nueva cámara
-          }
-        });
-
-        setScannerStatus(false, "Selecciona una cámara y pulsa Iniciar.");
+        setScannerStatus(false, "Pulsa Iniciar para usar la cámara por defecto.");
       } catch (err) {
-        console.error("Error inicializando ZXing o cámaras:", err);
-        alert("No se pudo inicializar la cámara. Revisa permisos y conexión HTTPS.");
-        setScannerStatus(false, "Error al inicializar cámara.");
+        console.error("Error inicializando ZXing:", err);
+        alert("No se pudo inicializar ZXing.");
+        setScannerStatus(false, "Error al inicializar ZXing.");
       }
     }
 
-    // ====== CONTROLAR ESCÁNER ======
+    // ====== CONTROL ESCÁNER ======
     async function startScanner() {
       if (!codeReader) {
         alert("ZXing aún no está listo.");
         return;
       }
-      if (!selectedDeviceId) {
-        alert("No hay cámara seleccionada.");
-        return;
-      }
 
       if (isScanning) {
-        // Reiniciar antes de comenzar de nuevo
         codeReader.reset();
       }
 
@@ -662,9 +606,9 @@
       setScannerStatus(true, "Apunta el código a la línea verde.");
 
       try {
-        // decodeFromVideoDevice: escaneo continuo desde cámara :contentReference[oaicite:2]{index=2}
+        // Pasamos null para que use la cámara por defecto del navegador
         await codeReader.decodeFromVideoDevice(
-          selectedDeviceId,
+          null,
           "videoPreview",
           (result, err) => {
             if (result) {
@@ -677,7 +621,7 @@
         );
       } catch (err) {
         console.error("Error al iniciar escáner:", err);
-        alert("No se pudo iniciar el escáner. Revisa permisos de cámara.");
+        alert("No se pudo iniciar el escáner. Revisa permisos de cámara y que estés usando HTTPS.");
         setScannerStatus(false, "Error iniciando cámara.");
         isScanning = false;
       }
@@ -691,10 +635,10 @@
       setScannerStatus(false, "Cámara detenida.");
     }
 
-    // ====== LISTENERS INICIALES ======
+    // ====== EVENTOS ======
     document.addEventListener("DOMContentLoaded", () => {
       loadRecordsFromStorage();
-      initZXingAndDevices();
+      initZXing();
 
       document.getElementById("btnStart").addEventListener("click", () => {
         startScanner();
