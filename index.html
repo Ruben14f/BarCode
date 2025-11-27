@@ -410,7 +410,8 @@
     let isScanning = false;
     let isProcessingScan = false;
     let scanRecords = [];
-    let lastScannedCode = null; // último código ya procesado
+    let lastScannedCode = null;   // último código procesado
+    let lastScanTime = 0;         // momento en que se procesó ese código
 
     let videoElement = null;
     let mediaStream = null;
@@ -541,16 +542,20 @@
       const codeText = result.getText ? result.getText() : result.text || "";
       if (!codeText) return;
 
-      // ⚠️ Si ya estamos procesando un código, no hacemos nada
+      const now = Date.now();
+
+      // Si YA estamos en medio de un prompt, no hacemos nada
       if (isProcessingScan) return;
 
-      // ⚠️ Si es el MISMO código que el último procesado, no lo volvemos a usar
-      if (codeText === lastScannedCode) {
+      // ⛔ Evitar loop: si es el mismo código y fue hace menos de 1.5 segundos, ignorar
+      if (codeText === lastScannedCode && now - lastScanTime < 1500) {
         return;
       }
 
+      // Marcamos que empezamos a procesar este código
       isProcessingScan = true;
-      lastScannedCode = codeText; // marcamos este código como ya usado
+      lastScannedCode = codeText;
+      lastScanTime = now;
 
       let format = "DESCONOCIDO";
       try {
@@ -596,7 +601,7 @@
       saveRecordsToStorage();
       renderRecordsTable();
 
-      // Listo con este código, permitimos que el loop busque otro distinto
+      // Listo con este código, permitimos que el loop siga buscando OTRO
       isProcessingScan = false;
     }
 
@@ -614,16 +619,14 @@
       }
 
       // "Franja" real de lectura (15% del alto, centrada)
-      const roiHeight = Math.floor(vh * 0.15); // puedes cambiar 0.15 por 0.10, 0.2, etc.
+      const roiHeight = Math.floor(vh * 0.15);
       const roiY = Math.floor((vh - roiHeight) / 2);
       const roiWidth = vw;
       const roiX = 0;
 
-      // Ajustamos el canvas a esa franja
       scanCanvas.width = roiWidth;
       scanCanvas.height = roiHeight;
 
-      // Dibujamos SOLO la franja central del video en el canvas
       scanCtx.drawImage(
         videoElement,
         roiX, roiY, roiWidth, roiHeight,
@@ -672,12 +675,12 @@
         return;
       }
 
-      // Reiniciamos estado para una nueva sesión de escaneo
+      // Reiniciamos estado para una nueva sesión
       lastScannedCode = null;
+      lastScanTime = 0;
       isScanning = true;
       isProcessingScan = false;
 
-      // Si ya había un stream, lo detenemos
       if (mediaStream) {
         mediaStream.getTracks().forEach(t => t.stop());
         mediaStream = null;
@@ -742,6 +745,7 @@
       });
     });
   </script>
+
 </body>
 
 </html>
