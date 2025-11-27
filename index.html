@@ -91,11 +91,11 @@
       border: 1px solid rgba(255, 255, 255, 0.12);
     }
 
-    /* “Franja” tipo código de barra: poco alto, ancho completo */
+
     .scanner-video-container {
       position: relative;
       width: 100%;
-      height: 180px;           /* Alto reducido, estilo escáner de barra */
+      height: 180px;           
       overflow: hidden;
       background: #000;
     }
@@ -104,8 +104,6 @@
       width: 100%;
       height: 100%;
       object-fit: cover;
-      /* 🔴 IMPORTANTE: ya NO invertimos la cámara */
-      /* transform: scaleX(-1);  <- eliminado */
     }
 
     /* Línea verde central */
@@ -230,7 +228,6 @@
     }
 
     /* Tabla de resultados */
-
     .table-wrapper {
       max-height: 400px;
       overflow: auto;
@@ -335,8 +332,8 @@
     <!-- PANEL IZQUIERDO: ESCÁNER -->
     <section class="card">
       <h1>
-        📷 Lector de códigos
-        <span class="badge">QR + Barra (ZXing)</span>
+        Lector de códigos
+        <span class="badge">QR + Barra</span>
       </h1>
       <p class="subtitle">
         Apunta la cámara hacia el código. Alinea el código con la
@@ -363,13 +360,13 @@
             <span id="statusText" class="status-text">Cámara detenida</span>
           </div>
           <div class="pill-info">
-            <span>Datos guardados en el navegador (localStorage)</span>
+            <span></span>
           </div>
         </div>
       </div>
 
       <p class="helper-text">
-        Por cada código se pedirá el
+        Por cada código se ingresa el
         <strong>Nombre de la persona</strong>. Es obligatorio ingresar un nombre.
       </p>
     </section>
@@ -380,9 +377,6 @@
         🧾 Registros escaneados
         <span class="badge">Exportable a CSV / Excel</span>
       </h2>
-      <p class="subtitle">
-        Los datos se guardan automáticamente en el almacenamiento local del navegador.
-      </p>
 
       <div class="records-actions">
         <button id="btnExport" class="secondary">⬇ Exportar CSV</button>
@@ -415,7 +409,7 @@
     // ====== ESTADO GLOBAL ======
     let codeReader = null;
     let isScanning = false;
-    let isProcessingScan = false; // 👈 para evitar loop de prompts
+    let isProcessingScan = false; 
     let scanRecords = [];
     let lastScannedCode = null;
     let lastScanTime = 0;
@@ -544,7 +538,6 @@
       // Si ya estamos procesando un código, no hagas nada (evita loop)
       if (isProcessingScan) return;
 
-      // (opcional) filtro anti-repetición muy rápida
       if (codeText === lastScannedCode && now - lastScanTime < 500) {
         return;
       }
@@ -567,7 +560,7 @@
         }
       } catch (_) {}
 
-      // ✅ Debe SI O SI ingresar un usuario (nombre no vacío)
+      //Debe SI O SI ingresar un usuario (nombre no vacío)
       let name;
       while (true) {
         name = prompt(
