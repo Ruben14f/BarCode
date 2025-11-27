@@ -405,60 +405,61 @@
     </section>
   </div>
 
-  <script>
-    // ====== ESTADO GLOBAL ======
-    let isScanning = false;
-    let isProcessingScan = false;
-    let scanRecords = [];
-    let lastScannedCode = null;   // último código procesado
-    let lastScanTime = 0;         // momento en que se procesó ese código
+<script>
+  // ====== ESTADO GLOBAL ======
+  let isScanning = false;
+  let isProcessingScan = false;
+  let scanRecords = [];
 
-    let videoElement = null;
-    let mediaStream = null;
+  // Códigos ya procesados en esta sesión de escaneo
+  let seenCodes = new Set();
 
-    // Canvas oculto para recortar SOLO la franja central
-    const scanCanvas = document.createElement("canvas");
-    const scanCtx = scanCanvas.getContext("2d");
+  let videoElement = null;
+  let mediaStream = null;
 
-    // Lector de ZXing (nivel bajo, sin helpers de video)
-    let reader = null;
+  // Canvas oculto para recortar SOLO la franja central
+  const scanCanvas = document.createElement("canvas");
+  const scanCtx = scanCanvas.getContext("2d");
 
-    // ====== STORAGE ======
-    function loadRecordsFromStorage() {
-      try {
-        const raw = localStorage.getItem("scanRecords");
-        scanRecords = raw ? JSON.parse(raw) : [];
-      } catch (e) {
-        console.error("Error leyendo localStorage:", e);
-        scanRecords = [];
-      }
-      renderRecordsTable();
+  // Lector de ZXing (nivel bajo, sin helpers de video)
+  let reader = null;
+
+  // ====== STORAGE ======
+  function loadRecordsFromStorage() {
+    try {
+      const raw = localStorage.getItem("scanRecords");
+      scanRecords = raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      console.error("Error leyendo localStorage:", e);
+      scanRecords = [];
+    }
+    renderRecordsTable();
+  }
+
+  function saveRecordsToStorage() {
+    try {
+      localStorage.setItem("scanRecords", JSON.stringify(scanRecords));
+    } catch (e) {
+      console.error("Error guardando en localStorage:", e);
+    }
+  }
+
+  // ====== TABLA ======
+  function renderRecordsTable() {
+    const tbody = document.getElementById("recordsBody");
+    const noDataMsg = document.getElementById("noDataMsg");
+    tbody.innerHTML = "";
+
+    if (!scanRecords.length) {
+      noDataMsg.style.display = "block";
+      return;
     }
 
-    function saveRecordsToStorage() {
-      try {
-        localStorage.setItem("scanRecords", JSON.stringify(scanRecords));
-      } catch (e) {
-        console.error("Error guardando en localStorage:", e);
-      }
-    }
+    noDataMsg.style.display = "none";
 
-    // ====== TABLA ======
-    function renderRecordsTable() {
-      const tbody = document.getElementById("recordsBody");
-      const noDataMsg = document.getElementById("noDataMsg");
-      tbody.innerHTML = "";
-
-      if (!scanRecords.length) {
-        noDataMsg.style.display = "block";
-        return;
-      }
-
-      noDataMsg.style.display = "none";
-
-      scanRecords.forEach((rec, index) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
+    scanRecords.forEach((rec, index) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
         <td>${index + 1}</td>
         <td>${rec.code}</td>
         <td>
@@ -470,281 +471,276 @@
         <td>${rec.name || "-"}</td>
         <td>${rec.time}</td>
       `;
-        tbody.appendChild(tr);
-      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  // ====== ESTADO UI ESCÁNER ======
+  function setScannerStatus(active, message) {
+    const dot = document.getElementById("statusDot");
+    const text = document.getElementById("statusText");
+
+    if (active) {
+      dot.classList.add("active");
+      text.innerHTML = `<strong>Escaneando...</strong> ${message || ""}`;
+    } else {
+      dot.classList.remove("active");
+      text.textContent = message || "Cámara detenida";
+    }
+  }
+
+  // ====== EXPORTAR CSV ======
+  function exportToCSV() {
+    if (!scanRecords.length) {
+      alert("No hay registros para exportar.");
+      return;
     }
 
-    // ====== ESTADO UI ESCÁNER ======
-    function setScannerStatus(active, message) {
-      const dot = document.getElementById("statusDot");
-      const text = document.getElementById("statusText");
+    const header = ["N°", "Código", "Tipo", "Nombre", "FechaHora"];
+    let csv = header.join(";") + "\n";
 
-      if (active) {
-        dot.classList.add("active");
-        text.innerHTML = `<strong>Escaneando...</strong> ${message || ""}`;
-      } else {
-        dot.classList.remove("active");
-        text.textContent = message || "Cámara detenida";
-      }
+    scanRecords.forEach((rec, index) => {
+      const safeCode = String(rec.code).replace(/"/g, '""');
+      const safeType = String(rec.type || "").replace(/"/g, '""');
+      const safeName = String(rec.name || "").replace(/"/g, '""');
+      const safeTime = String(rec.time || "").replace(/"/g, '""');
+
+      csv += [
+        index + 1,
+        `"${safeCode}"`,
+        `"${safeType}"`,
+        `"${safeName}"`,
+        `"${safeTime}"`
+      ].join(";") + "\n";
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "lecturas_codigos.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }
+
+  // ====== LIMPIAR REGISTROS ======
+  function clearRecords() {
+    if (!confirm("¿Seguro que quieres eliminar todos los registros guardados?")) {
+      return;
+    }
+    scanRecords = [];
+    saveRecordsToStorage();
+    renderRecordsTable();
+  }
+
+  // ====== MANEJO DE ESCANEOS (resultado ya decodificado) ======
+  function handleScanResult(result) {
+    if (!result) return;
+
+    const codeText = result.getText ? result.getText() : result.text || "";
+    if (!codeText) return;
+
+    // Si YA estamos pidiendo nombre, no hacemos nada
+    if (isProcessingScan) return;
+
+    // ⛔ Si este código YA se procesó en esta sesión, lo ignoramos
+    if (seenCodes.has(codeText)) {
+      return;
     }
 
-    // ====== EXPORTAR CSV ======
-    function exportToCSV() {
-      if (!scanRecords.length) {
-        alert("No hay registros para exportar.");
-        return;
+    // Marcamos este código como ya visto en esta sesión
+    seenCodes.add(codeText);
+    isProcessingScan = true;
+
+    let format = "DESCONOCIDO";
+    try {
+      if (result.getBarcodeFormat) {
+        format = String(result.getBarcodeFormat());
+      } else if (result.barcodeFormat) {
+        format = String(result.barcodeFormat);
       }
+    } catch (_) {}
 
-      const header = ["N°", "Código", "Tipo", "Nombre", "FechaHora"];
-      let csv = header.join(";") + "\n";
-
-      scanRecords.forEach((rec, index) => {
-        const safeCode = String(rec.code).replace(/"/g, '""');
-        const safeType = String(rec.type || "").replace(/"/g, '""');
-        const safeName = String(rec.name || "").replace(/"/g, '""');
-        const safeTime = String(rec.time || "").replace(/"/g, '""');
-
-        csv += [
-          index + 1,
-          `"${safeCode}"`,
-          `"${safeType}"`,
-          `"${safeName}"`,
-          `"${safeTime}"`
-        ].join(";") + "\n";
-      });
-
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "lecturas_codigos.csv";
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-    }
-
-    // ====== LIMPIAR REGISTROS ======
-    function clearRecords() {
-      if (!confirm("¿Seguro que quieres eliminar todos los registros guardados?")) {
-        return;
-      }
-      scanRecords = [];
-      saveRecordsToStorage();
-      renderRecordsTable();
-    }
-
-    // ====== MANEJO DE ESCANEOS (resultado ya decodificado) ======
-    function handleScanResult(result) {
-      if (!result) return;
-
-      const codeText = result.getText ? result.getText() : result.text || "";
-      if (!codeText) return;
-
-      const now = Date.now();
-
-      // Si YA estamos en medio de un prompt, no hacemos nada
-      if (isProcessingScan) return;
-
-      // ⛔ Evitar loop: si es el mismo código y fue hace menos de 1.5 segundos, ignorar
-      if (codeText === lastScannedCode && now - lastScanTime < 1500) {
-        return;
-      }
-
-      // Marcamos que empezamos a procesar este código
-      isProcessingScan = true;
-      lastScannedCode = codeText;
-      lastScanTime = now;
-
-      let format = "DESCONOCIDO";
-      try {
-        if (result.getBarcodeFormat) {
-          format = String(result.getBarcodeFormat());
-        } else if (result.barcodeFormat) {
-          format = String(result.barcodeFormat);
-        }
-      } catch (_) { }
-
-      // ✅ Debe SI O SI ingresar un usuario (nombre no vacío)
-      let name;
-      while (true) {
-        name = prompt(
-          `Código detectado:\n\n${codeText}\n\nIngresa el NOMBRE de la persona asociada a este código (obligatorio):`
-        );
-
-        if (name === null) {
-          // Canceló → no guardamos nada
-          isProcessingScan = false;
-          return;
-        }
-
-        const trimmed = name.trim();
-        if (!trimmed) {
-          alert("Debes ingresar un nombre para continuar.");
-          continue; // vuelve a preguntar
-        }
-
-        name = trimmed;
-        break; // nombre válido
-      }
-
-      const timestamp = new Date().toLocaleString();
-
-      scanRecords.push({
-        code: codeText,
-        type: format,
-        name: name,
-        time: timestamp
-      });
-
-      saveRecordsToStorage();
-      renderRecordsTable();
-
-      // Listo con este código, permitimos que el loop siga buscando OTRO
-      isProcessingScan = false;
-    }
-
-    // ====== LOOP DE ESCANEO SOLO EN LA FRANJA CENTRAL ======
-    function scanLoop() {
-      if (!isScanning || !reader || !videoElement) return;
-
-      const vw = videoElement.videoWidth;
-      const vh = videoElement.videoHeight;
-
-      // A veces el video tarda en tener dimensiones
-      if (!vw || !vh) {
-        requestAnimationFrame(scanLoop);
-        return;
-      }
-
-      // "Franja" real de lectura (15% del alto, centrada)
-      const roiHeight = Math.floor(vh * 0.15);
-      const roiY = Math.floor((vh - roiHeight) / 2);
-      const roiWidth = vw;
-      const roiX = 0;
-
-      scanCanvas.width = roiWidth;
-      scanCanvas.height = roiHeight;
-
-      scanCtx.drawImage(
-        videoElement,
-        roiX, roiY, roiWidth, roiHeight,
-        0, 0, scanCanvas.width, scanCanvas.height
+    // ✅ Debe SI O SI ingresar un usuario (nombre no vacío)
+    let name;
+    while (true) {
+      name = prompt(
+        `Código detectado:\n\n${codeText}\n\nIngresa el NOMBRE de la persona asociada a este código (obligatorio):`
       );
 
-      if (!isProcessingScan) {
-        try {
-          const luminanceSource = new ZXing.HTMLCanvasElementLuminanceSource(scanCanvas);
-          const binaryBitmap = new ZXing.BinaryBitmap(
-            new ZXing.HybridBinarizer(luminanceSource)
-          );
-
-          const result = reader.decode(binaryBitmap);
-          if (result) {
-            handleScanResult(result);
-          }
-        } catch (err) {
-          if (!(err instanceof ZXing.NotFoundException)) {
-            console.error("Error de ZXing:", err);
-          }
-        }
-      }
-
-      if (isScanning) {
-        requestAnimationFrame(scanLoop);
-      }
-    }
-
-    // ====== INICIALIZAR ZXING ======
-    function initZXing() {
-      try {
-        reader = new ZXing.MultiFormatReader();
-        setScannerStatus(false, "Pulsa Iniciar para usar la cámara por defecto.");
-      } catch (err) {
-        console.error("Error inicializando ZXing:", err);
-        alert("No se pudo inicializar ZXing.");
-        setScannerStatus(false, "Error al inicializar ZXing.");
-      }
-    }
-
-    // ====== CONTROL ESCÁNER ======
-    async function startScanner() {
-      if (!reader) {
-        alert("ZXing aún no está listo.");
+      if (name === null) {
+        // Canceló → no guardamos nada
+        isProcessingScan = false;
         return;
       }
 
-      // Reiniciamos estado para una nueva sesión
-      lastScannedCode = null;
-      lastScanTime = 0;
-      isScanning = true;
-      isProcessingScan = false;
-
-      if (mediaStream) {
-        mediaStream.getTracks().forEach(t => t.stop());
-        mediaStream = null;
+      const trimmed = name.trim();
+      if (!trimmed) {
+        alert("Debes ingresar un nombre para continuar.");
+        continue; // vuelve a preguntar
       }
 
-      setScannerStatus(true, "Apunta el código a la línea verde.");
-
-      try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-          audio: false
-        });
-
-        videoElement.srcObject = mediaStream;
-        await videoElement.play();
-
-        requestAnimationFrame(scanLoop);
-      } catch (err) {
-        console.error("Error al iniciar escáner:", err);
-        alert("No se pudo iniciar el escáner. Revisa permisos de cámara y que estés usando HTTPS.");
-        setScannerStatus(false, "Error iniciando cámara.");
-        isScanning = false;
-      }
+      name = trimmed;
+      break; // nombre válido
     }
 
-    function stopScanner() {
-      isScanning = false;
-      isProcessingScan = false;
+    const timestamp = new Date().toLocaleString();
 
-      if (mediaStream) {
-        mediaStream.getTracks().forEach(t => t.stop());
-        mediaStream = null;
-      }
-      if (videoElement) {
-        videoElement.srcObject = null;
-      }
-
-      setScannerStatus(false, "Cámara detenida.");
-    }
-
-    // ====== EVENTOS ======
-    document.addEventListener("DOMContentLoaded", () => {
-      videoElement = document.getElementById("videoPreview");
-
-      loadRecordsFromStorage();
-      initZXing();
-
-      document.getElementById("btnStart").addEventListener("click", () => {
-        startScanner();
-      });
-
-      document.getElementById("btnStop").addEventListener("click", () => {
-        stopScanner();
-      });
-
-      document.getElementById("btnExport").addEventListener("click", () => {
-        exportToCSV();
-      });
-
-      document.getElementById("btnClear").addEventListener("click", () => {
-        clearRecords();
-      });
+    scanRecords.push({
+      code: codeText,
+      type: format,
+      name: name,
+      time: timestamp
     });
-  </script>
+
+    saveRecordsToStorage();
+    renderRecordsTable();
+
+    // Listo con este código, dejamos que el loop siga buscando OTRO distinto
+    isProcessingScan = false;
+  }
+
+  // ====== LOOP DE ESCANEO SOLO EN LA FRANJA CENTRAL ======
+  function scanLoop() {
+    if (!isScanning || !reader || !videoElement) return;
+
+    const vw = videoElement.videoWidth;
+    const vh = videoElement.videoHeight;
+
+    if (!vw || !vh) {
+      requestAnimationFrame(scanLoop);
+      return;
+    }
+
+    const roiHeight = Math.floor(vh * 0.15); // 15% de alto centrado
+    const roiY = Math.floor((vh - roiHeight) / 2);
+    const roiWidth = vw;
+    const roiX = 0;
+
+    scanCanvas.width = roiWidth;
+    scanCanvas.height = roiHeight;
+
+    scanCtx.drawImage(
+      videoElement,
+      roiX, roiY, roiWidth, roiHeight,
+      0, 0, scanCanvas.width, scanCanvas.height
+    );
+
+    if (!isProcessingScan) {
+      try {
+        const luminanceSource = new ZXing.HTMLCanvasElementLuminanceSource(scanCanvas);
+        const binaryBitmap = new ZXing.BinaryBitmap(
+          new ZXing.HybridBinarizer(luminanceSource)
+        );
+
+        const result = reader.decode(binaryBitmap);
+        if (result) {
+          handleScanResult(result);
+        }
+      } catch (err) {
+        if (!(err instanceof ZXing.NotFoundException)) {
+          console.error("Error de ZXing:", err);
+        }
+      }
+    }
+
+    if (isScanning) {
+      requestAnimationFrame(scanLoop);
+    }
+  }
+
+  // ====== INICIALIZAR ZXING ======
+  function initZXing() {
+    try {
+      reader = new ZXing.MultiFormatReader();
+      setScannerStatus(false, "Pulsa Iniciar para usar la cámara por defecto.");
+    } catch (err) {
+      console.error("Error inicializando ZXing:", err);
+      alert("No se pudo inicializar ZXing.");
+      setScannerStatus(false, "Error al inicializar ZXing.");
+    }
+  }
+
+  // ====== CONTROL ESCÁNER ======
+  async function startScanner() {
+    if (!reader) {
+      alert("ZXing aún no está listo.");
+      return;
+    }
+
+    // Nueva sesión → limpiamos el set de códigos ya vistos
+    seenCodes = new Set();
+    isScanning = true;
+    isProcessingScan = false;
+
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+
+    setScannerStatus(true, "Apunta el código a la línea verde.");
+
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false
+      });
+
+      videoElement.srcObject = mediaStream;
+      await videoElement.play();
+
+      requestAnimationFrame(scanLoop);
+    } catch (err) {
+      console.error("Error al iniciar escáner:", err);
+      alert("No se pudo iniciar el escáner. Revisa permisos de cámara y que estés usando HTTPS.");
+      setScannerStatus(false, "Error iniciando cámara.");
+      isScanning = false;
+    }
+  }
+
+  function stopScanner() {
+    isScanning = false;
+    isProcessingScan = false;
+
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(t => t.stop());
+      mediaStream = null;
+    }
+    if (videoElement) {
+      videoElement.srcObject = null;
+    }
+
+    setScannerStatus(false, "Cámara detenida.");
+  }
+
+  // ====== EVENTOS ======
+  document.addEventListener("DOMContentLoaded", () => {
+    videoElement = document.getElementById("videoPreview");
+
+    loadRecordsFromStorage();
+    initZXing();
+
+    document.getElementById("btnStart").addEventListener("click", () => {
+      startScanner();
+    });
+
+    document.getElementById("btnStop").addEventListener("click", () => {
+      stopScanner();
+    });
+
+    document.getElementById("btnExport").addEventListener("click", () => {
+      exportToCSV();
+    });
+
+    document.getElementById("btnClear").addEventListener("click", () => {
+      clearRecords();
+    });
+  });
+</script>
+
 
 </body>
 
