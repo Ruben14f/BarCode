@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8" />
   <title>Lector de Códigos (QR + Barra)</title>
@@ -95,7 +96,7 @@
     .scanner-video-container {
       position: relative;
       width: 100%;
-      height: 70px;           
+      height: 70px;
       overflow: hidden;
       background: #000;
     }
@@ -125,12 +126,10 @@
       content: "";
       position: absolute;
       inset: -18px 0;
-      background: linear-gradient(
-        to bottom,
-        transparent,
-        rgba(0, 255, 127, 0.15),
-        transparent
-      );
+      background: linear-gradient(to bottom,
+          transparent,
+          rgba(0, 255, 127, 0.15),
+          transparent);
       pointer-events: none;
     }
 
@@ -327,6 +326,7 @@
     }
   </style>
 </head>
+
 <body>
   <div class="app-container">
     <!-- PANEL IZQUIERDO: ESCÁNER -->
@@ -409,10 +409,18 @@
     // ====== ESTADO GLOBAL ======
     let codeReader = null;
     let isScanning = false;
-    let isProcessingScan = false; 
+    let isProcessingScan = false;
     let scanRecords = [];
     let lastScannedCode = null;
     let lastScanTime = 0;
+
+    // Referencias a video y stream
+    const videoElement = document.getElementById("videoPreview");
+    let mediaStream = null;
+
+    // Canvas oculto para recortar SOLO la franja central
+    const scanCanvas = document.createElement("canvas");
+    const scanCtx = scanCanvas.getContext("2d");
 
     // ====== STORAGE ======
     function loadRecordsFromStorage() {
@@ -450,17 +458,17 @@
       scanRecords.forEach((rec, index) => {
         const tr = document.createElement("tr");
         tr.innerHTML = `
-          <td>${index + 1}</td>
-          <td>${rec.code}</td>
-          <td>
-            <span class="tag">
-              <span class="tag-dot"></span>
-              ${rec.type || "DESCONOCIDO"}
-            </span>
-          </td>
-          <td>${rec.name || "-"}</td>
-          <td>${rec.time}</td>
-        `;
+        <td>${index + 1}</td>
+        <td>${rec.code}</td>
+        <td>
+          <span class="tag">
+            <span class="tag-dot"></span>
+            ${rec.type || "DESCONOCIDO"}
+          </span>
+        </td>
+        <td>${rec.name || "-"}</td>
+        <td>${rec.time}</td>
+      `;
         tbody.appendChild(tr);
       });
     }
@@ -526,7 +534,7 @@
       renderRecordsTable();
     }
 
-    // ====== MANEJO DE ESCANEOS ======
+    // ====== MANEJO DE ESCANEOS (resultado ya decodificado) ======
     function handleScanResult(result) {
       if (!result) return;
 
@@ -535,9 +543,10 @@
 
       const now = Date.now();
 
-      // Si ya estamos procesando un código, no hagas nada (evita loop)
+      // Si ya estamos procesando un código, no hagas nada (evita doble prompt)
       if (isProcessingScan) return;
 
+      // Filtro anti-repetición muy rápida del mismo código
       if (codeText === lastScannedCode && now - lastScanTime < 500) {
         return;
       }
@@ -546,11 +555,6 @@
       lastScanTime = now;
       isProcessingScan = true;
 
-      // Pausar escáner mientras pedimos el nombre
-      if (codeReader) {
-        codeReader.reset();
-      }
-
       let format = "DESCONOCIDO";
       try {
         if (result.getBarcodeFormat) {
@@ -558,9 +562,9 @@
         } else if (result.barcodeFormat) {
           format = String(result.barcodeFormat);
         }
-      } catch (_) {}
+      } catch (_) { }
 
-      //Debe SI O SI ingresar un usuario (nombre no vacío)
+      // ✅ Debe SI O SI ingresar un usuario (nombre no vacío)
       let name;
       while (true) {
         name = prompt(
@@ -568,12 +572,8 @@
         );
 
         if (name === null) {
-          // Si cancela, no guardamos, pero salimos del bucle
+          // Canceló → no guardamos ni nada, solo dejamos de procesar
           isProcessingScan = false;
-          // Si el usuario sigue con escáner activo, lo reanudamos:
-          if (isScanning) {
-            startScanner();
-          }
           return;
         }
 
@@ -599,12 +599,58 @@
       saveRecordsToStorage();
       renderRecordsTable();
 
-      // Terminamos de procesar este scan
+      // Terminamos de procesar este scan, el loop seguirá buscando el próximo frame
       isProcessingScan = false;
+    }
 
-      // Volver a escanear el siguiente código (si el usuario no ha detenido)
+    // ====== LOOP DE ESCANEO SOLO EN LA FRANJA CENTRAL ======
+    async function scanLoop() {
+      if (!isScanning || !codeReader || !videoElement) return;
+
+      const vw = videoElement.videoWidth;
+      const vh = videoElement.videoHeight;
+
+      // A veces el video tarda en tener dimensiones
+      if (!vw || !vh) {
+        requestAnimationFrame(scanLoop);
+        return;
+      }
+
+      // Definimos la "franja" real de lectura (p. ej., 15% de la altura centrado)
+      const roiHeight = Math.floor(vh * 0.15); // 15% de alto
+      const roiY = Math.floor((vh - roiHeight) / 2); // centrada verticalmente
+      const roiWidth = vw;
+      const roiX = 0;
+
+      // Ajustamos el canvas a esa franja
+      scanCanvas.width = roiWidth;
+      scanCanvas.height = roiHeight;
+
+      // Dibujar SOLO la franja central del video en el canvas
+      scanCtx.drawImage(
+        videoElement,
+        roiX, roiY, roiWidth, roiHeight,
+        0, 0, scanCanvas.width, scanCanvas.height
+      );
+
+      if (!isProcessingScan) {
+        try {
+          // ZXing sólo procesa lo que está en el canvas recortado
+          const result = await codeReader.decodeFromCanvas(scanCanvas);
+          if (result) {
+            handleScanResult(result);
+          }
+        } catch (err) {
+          // NotFound = no encontró código en este frame → es normal, no logueamos
+          if (!(err instanceof ZXing.NotFoundException)) {
+            console.error("Error de ZXing:", err);
+          }
+        }
+      }
+
+      // Volver a intentar en el siguiente frame
       if (isScanning) {
-        startScanner();
+        requestAnimationFrame(scanLoop);
       }
     }
 
@@ -627,24 +673,28 @@
         return;
       }
 
-      // Marcamos que el usuario quiere escanear
+      // Si ya había un stream, lo detenemos
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+
       isScanning = true;
+      isProcessingScan = false;
       setScannerStatus(true, "Apunta el código a la línea verde.");
 
       try {
-        // Usar cámara por defecto del navegador
-        await codeReader.decodeFromVideoDevice(
-          null,
-          "videoPreview",
-          (result, err) => {
-            if (result) {
-              handleScanResult(result);
-            }
-            if (err && !(err instanceof ZXing.NotFoundException)) {
-              console.error("Error de ZXing:", err);
-            }
-          }
-        );
+        // Usar cámara por defecto (en el móvil suele ser trasera con facingMode: environment)
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false
+        });
+
+        videoElement.srcObject = mediaStream;
+        await videoElement.play();
+
+        // Arrancamos el loop de escaneo con recorte a la franja
+        requestAnimationFrame(scanLoop);
       } catch (err) {
         console.error("Error al iniciar escáner:", err);
         alert("No se pudo iniciar el escáner. Revisa permisos de cámara y que estés usando HTTPS.");
@@ -654,11 +704,17 @@
     }
 
     function stopScanner() {
-      if (codeReader) {
-        codeReader.reset();
-      }
       isScanning = false;
       isProcessingScan = false;
+
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+      }
+      if (videoElement) {
+        videoElement.srcObject = null;
+      }
+
       setScannerStatus(false, "Cámara detenida.");
     }
 
@@ -684,5 +740,7 @@
       });
     });
   </script>
+
 </body>
+
 </html>
